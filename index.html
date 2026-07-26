@@ -118,7 +118,7 @@
       <!-- Grid Lado a Lado no Desktop / Empilhado no Mobile -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         
-        <!-- Cupom / Nota Fiscal (Com largura reduzida no desktop) -->
+        <!-- Cupom / Nota Fiscal -->
         <div class="relative shadow-2xl rounded-t-sm overflow-hidden text-slate-900 font-receipt w-full md:max-w-sm md:mx-auto">
           <div class="receipt-paper p-5 space-y-4 border-b-2 border-dashed border-amber-300">
             
@@ -178,7 +178,7 @@
             <p class="text-xs text-slate-400">Texto formatado pronto para enviar ao estabelecimento:</p>
           </div>
 
-          <textarea id="whatsapp-text-area" readonly class="w-full h-56 bg-slate-900 border border-slate-700 rounded-xl p-3.5 text-xs md:text-sm font-mono text-emerald-300 focus:outline-none resize-none leading-relaxed shadow-inner"></textarea>
+          <textarea id="whatsapp-text-area" readonly class="w-full bg-slate-900 border border-slate-700 rounded-xl p-3.5 text-xs md:text-sm font-mono text-emerald-300 focus:outline-none resize-none leading-relaxed shadow-inner overflow-hidden"></textarea>
 
           <button onclick="sendToWhatsApp()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold py-3.5 px-4 rounded-xl shadow-lg shadow-emerald-900/30 text-base transition flex items-center justify-center gap-2 active:scale-[0.99]">
             <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24">
@@ -427,7 +427,13 @@
       return 'Boa noite';
     }
 
-    // Calcula total, divisão por pessoa e gera o texto do WhatsApp
+    // Ajusta a altura da caixa de texto dinamicamente
+    function autoResizeTextarea(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+    // Calcula total, divisão por pessoa e gera os textos formatados
     function calculateSplit() {
       const peopleInput = document.getElementById('people-count');
       let people = parseInt(peopleInput.value) || 1;
@@ -437,36 +443,61 @@
       const itemsContainer = document.getElementById('receipt-items');
       itemsContainer.innerHTML = '';
 
-      let whatsappItemList = [];
+      // Dicionário para agrupar pizzas idênticas
+      const groupedPizzas = {};
 
-      pizzas.forEach((pizza, i) => {
+      pizzas.forEach((pizza) => {
         const f1 = MENU.find(m => m.id === pizza.flavor1) || MENU[0];
-        let price = 0;
-        let desc = '';
+        let unitPrice = 0;
+        let groupKey = '';
+        let receiptDesc = '';
         let whatsappDesc = '';
 
         if (pizza.type === 'full') {
-          price = f1.price;
-          desc = `1x Pizza ${f1.name}`;
-          whatsappDesc = `#${i + 1} - Pizza ${f1.name}`;
+          unitPrice = f1.price;
+          groupKey = `full_${f1.id}`;
+          receiptDesc = `Pizza ${f1.name}`;
+          whatsappDesc = `Pizza ${f1.name}`;
         } else {
           const f2 = MENU.find(m => m.id === pizza.flavor2) || MENU[1];
-          price = (f1.price + f2.price) / 2;
-          desc = `1x Pizza 1/2 ${f1.name} + 1/2 ${f2.name}`;
-          whatsappDesc = `#${i + 1} - Metade ${f1.name} + Metade ${f2.name}`;
+          unitPrice = (f1.price + f2.price) / 2;
+          groupKey = `half_${f1.id}_${f2.id}`;
+          receiptDesc = `Pizza 1/2 ${f1.name} + 1/2 ${f2.name}`;
+          whatsappDesc = `Metade ${f1.name} + Metade ${f2.name}`;
         }
 
-        grandTotal += price;
-        whatsappItemList.push(whatsappDesc);
+        grandTotal += unitPrice;
 
+        if (groupedPizzas[groupKey]) {
+          groupedPizzas[groupKey].quantity += 1;
+          groupedPizzas[groupKey].totalPrice += unitPrice;
+        } else {
+          groupedPizzas[groupKey] = {
+            quantity: 1,
+            unitPrice: unitPrice,
+            totalPrice: unitPrice,
+            receiptDesc: receiptDesc,
+            whatsappDesc: whatsappDesc
+          };
+        }
+      });
+
+      // Renderiza na Notinha no formato: "1. 2x Pizza Calabresa"
+      const groupedKeys = Object.keys(groupedPizzas);
+      groupedKeys.forEach((key, index) => {
+        const item = groupedPizzas[key];
         const itemRow = document.createElement('div');
         itemRow.className = 'flex justify-between items-start border-b border-slate-200/60 pb-1.5';
+        
+        const qtyText = `${item.quantity}x `;
+        const totalSlices = item.quantity * 8;
+
         itemRow.innerHTML = `
           <div class="pr-2">
-            <div class="font-bold">${i + 1}. ${desc}</div>
-            <div class="text-[10px] text-slate-500">8 fatias</div>
+            <div class="font-bold">${index + 1}. ${qtyText}${item.receiptDesc}</div>
+            <div class="text-[10px] text-slate-500">${totalSlices} fatias</div>
           </div>
-          <div class="font-bold whitespace-nowrap">R$ ${price.toFixed(2).replace('.', ',')}</div>
+          <div class="font-bold whitespace-nowrap">R$ ${item.totalPrice.toFixed(2).replace('.', ',')}</div>
         `;
         itemsContainer.appendChild(itemRow);
       });
@@ -491,11 +522,18 @@
         leftoverContainer.classList.add('hidden');
       }
 
-      // Montagem da Mensagem do WhatsApp
+      // Montagem da Mensagem do WhatsApp no formato: "- #1. 2x Pizza Calabresa"
+      let whatsappItemList = groupedKeys.map((key, index) => {
+        const item = groupedPizzas[key];
+        return `- #${index + 1}. ${item.quantity}x ${item.whatsappDesc}`;
+      });
+
       const greeting = getGreeting();
       const whatsappText = `${greeting}!\n\nNosso pedido será:\n\n${whatsappItemList.join('\n')}\n\nPode nos informar o total e previsão de quando estará pronto? Obrigado!`;
 
-      document.getElementById('whatsapp-text-area').value = whatsappText;
+      const textarea = document.getElementById('whatsapp-text-area');
+      textarea.value = whatsappText;
+      autoResizeTextarea(textarea);
     }
 
     // Função para abrir o WhatsApp diretamente com a mensagem
